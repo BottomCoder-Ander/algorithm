@@ -1,4 +1,6 @@
 *.zip
 
-
+*.vscode/*
 */.vscode/*
+data structure/b tree/.vscode/tasks.json
+data structure/b tree/.vscode/*.json
