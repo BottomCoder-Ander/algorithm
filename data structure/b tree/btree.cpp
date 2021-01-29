@@ -11,7 +11,7 @@ namespace btree{
 #ifdef DEBUG
 #define checkpar(p) do { \
     if(p != NULL && p->ptr[0] != NULL) {\
-        for(int i = 0; i <= p->keynum; ++i){\
+        for(size_t i = 0; i <= p->keynum; ++i){\
             assert(p->ptr[i]->parent == p);\
         }\
     }\
@@ -22,16 +22,16 @@ namespace btree{
  * 在结点p中查找关键字k的插入位置i
  */
 template<typename KeyType>
-bool BTree<KeyType>::_searchNode(BTree<KeyType>::BTNode *p, KeyType key, int &idx) const {
+bool BTree<KeyType>::_searchNode(BTree<KeyType>::BTNode *p, KeyType key, size_t &idx) const {
 
     if(p->keynum < 16) {
         for(idx = 0; idx < p->keynum && p->key[idx+1] <= key; ++idx);
         return idx > 0 && p->key[idx] == key;
     }
     //二分，找到第一个大于的，upper_bound。
-    int left = 1, right = p->keynum;
+    size_t left = 1, right = p->keynum;
     while(left <= right){
-        int mid = (left + right) >> 1;
+        size_t mid = (left + right) >> 1;
         if(p->key[mid] <= key){
             left = mid + 1;       
         }else{
@@ -50,7 +50,7 @@ bool BTree<KeyType>::_searchNode(BTree<KeyType>::BTNode *p, KeyType key, int &id
  * 否则特征值sucess = 0, 关键字k的插入位置为pt结点的第idx个
  */
 template<typename KeyType>
-bool BTree<KeyType>::_searchBTree(KeyType key, BTree<KeyType>::BTNode *&p, int &idx) const {
+bool BTree<KeyType>::_searchBTree(KeyType key, BTree<KeyType>::BTNode *&p, size_t &idx) const {
     BTNode *p_par = NULL;                         //初始化结点p和结点q,p指向待查结点,q指向p的双亲               
     p = root;
     while(p != NULL){
@@ -70,7 +70,7 @@ template<typename KeyType>
 bool BTree<KeyType>::search(KeyType &key) {
     
     BTNode *p; 
-    int idx;
+    size_t idx;
     if(_searchBTree(key, p, idx)) {
         key = p->key[idx];
         return true;
@@ -83,7 +83,7 @@ bool BTree<KeyType>::search(KeyType &key) {
  */
 
 template<typename KeyType>
-void BTree<KeyType>::_insertBTNode(BTree<KeyType>::BTNode *&p, int idx, KeyType key, BTNode *q) {
+void BTree<KeyType>::_insertBTNode(BTree<KeyType>::BTNode *&p, size_t idx, KeyType key, BTNode *q) {
     memmove(&(p->key[idx + 2]), &(p->key[idx + 1]), (p->keynum - idx) * sizeof(KeyType));
     memmove(&(p->ptr[idx + 2]), &(p->ptr[idx + 1]), (p->keynum - idx) * sizeof(BTNode *)); 
     p->key[idx + 1] = key;
@@ -98,7 +98,7 @@ template<typename KeyType>
 void BTree<KeyType>::_splitBTNode(BTree<KeyType>::BTNode *p, BTree<KeyType>::BTNode *&q) {
 //将结点p分裂成两个结点,前一半保留, 后一半移入结点q
 
-    int s = (m + 1) >> 1;
+    size_t s = (m + 1) >> 1;
     q = new BTNode(m);             //给结点q分配空间
 
     q->ptr[0] = p->ptr[s];                            //后一半移入结点q
@@ -109,7 +109,7 @@ void BTree<KeyType>::_splitBTNode(BTree<KeyType>::BTNode *p, BTree<KeyType>::BTN
     q->keynum = m - s;                
     q->parent = p->parent;
 
-    for(int i = 0; i <= m - s; ++i)                      //修改双亲指针 
+    for(size_t i = 0; i <= m - s; ++i)                      //修改双亲指针 
         if(q->ptr[i] != NULL) 
             q->ptr[i]->parent = q;
 
@@ -137,9 +137,9 @@ void BTree<KeyType>::_newRoot(KeyType key, BTree<KeyType>::BTNode *p, BTree<KeyT
  * 在树t上结点q的key[idx]与key[idx+1]之间插入关键字k。若引起
  * 结点过大,则沿双亲链进行必要的结点分裂调整 */
 template<typename KeyType>
-void BTree<KeyType>::_insertBTree(BTree<KeyType>::BTNode *p, int idx, KeyType key) {
+void BTree<KeyType>::_insertBTree(BTree<KeyType>::BTNode *p, size_t idx, KeyType key) {
     BTNode *q = NULL;
-    int  s;                   //设定需要新结点标志和插入完成标志 
+    size_t  s;                   //设定需要新结点标志和插入完成标志 
     if(p == NULL)                                     //t是空树
         _newRoot(key, NULL, NULL);                     //生成仅含关键字k的根结点t
     else{
@@ -167,7 +167,7 @@ void BTree<KeyType>::_insertBTree(BTree<KeyType>::BTNode *p, int idx, KeyType ke
 template<typename KeyType>
 bool BTree<KeyType>::insert(KeyType key) {
     BTNode *p;
-    int idx;
+    size_t idx;
     if(_searchBTree(key, p, idx)) return false;
     _insertBTree(p, idx, key);
     return true;
@@ -189,7 +189,7 @@ bool BTree<KeyType>::insert(KeyType key) {
  */
 
 template<typename KeyType>
-inline void BTree<KeyType>::_substitution(BTree<KeyType>::BTNode *p, int idx) {
+inline void BTree<KeyType>::_substitution(BTree<KeyType>::BTNode *p, size_t idx) {
     BTNode *q;
     for(q = p->ptr[idx]; q->ptr[0] != NULL; q = q->ptr[0]);
     p->key[idx] = q->key[1];                            //复制关键字值
@@ -200,7 +200,7 @@ inline void BTree<KeyType>::_substitution(BTree<KeyType>::BTNode *p, int idx) {
  */
 
 template<typename KeyType>
-void BTree<KeyType>::_moveRight(BTree<KeyType>::BTNode *p, int idx) {
+void BTree<KeyType>::_moveRight(BTree<KeyType>::BTNode *p, size_t idx) {
 /*将双亲结点p中的最后一个关键字移入右结点q中
 将左结点aq中的最后一个关键字移入双亲结点p中*/ 
     BTNode *q = p->ptr[idx];
@@ -223,7 +223,7 @@ void BTree<KeyType>::_moveRight(BTree<KeyType>::BTNode *p, int idx) {
  */
 
 template<typename KeyType>
-void BTree<KeyType>::_moveLeft(BTree<KeyType>::BTNode *p, int idx) {
+void BTree<KeyType>::_moveLeft(BTree<KeyType>::BTNode *p, size_t idx) {
 
     BTNode *q = p->ptr[idx];
     BTNode *aq = p->ptr[idx - 1];
@@ -245,7 +245,7 @@ void BTree<KeyType>::_moveLeft(BTree<KeyType>::BTNode *p, int idx) {
  */
 
 template<typename KeyType>
-void BTree<KeyType>::_combine(BTree<KeyType>::BTNode *p, int idx) {
+void BTree<KeyType>::_combine(BTree<KeyType>::BTNode *p, size_t idx) {
     BTNode *q = p->ptr[idx];                            
     BTNode *aq = p->ptr[idx - 1];
 
@@ -256,7 +256,7 @@ void BTree<KeyType>::_combine(BTree<KeyType>::BTNode *p, int idx) {
         aq->ptr[aq->keynum]->parent = aq;
     }
 
-    for(int j = 1; j <= q->keynum; ++j){                      //将右结点q中的所有关键字插入到左结点aq 
+    for(size_t j = 1; j <= q->keynum; ++j){                      //将右结点q中的所有关键字插入到左结点aq 
         aq->keynum++;
         aq->key[aq->keynum] = q->key[j];
         aq->ptr[aq->keynum] = q->ptr[j];
@@ -264,7 +264,7 @@ void BTree<KeyType>::_combine(BTree<KeyType>::BTNode *p, int idx) {
             aq->ptr[aq->keynum]->parent = aq;
     }
 
-    for(int j = idx; j < p->keynum; ++j){                       //将双亲结点p中的p->key[i]后的所有关键字向前移动一位 
+    for(size_t j = idx; j < p->keynum; ++j){                       //将双亲结点p中的p->key[i]后的所有关键字向前移动一位 
         p->key[j] = p->key[j + 1];
         p->ptr[j] = p->ptr[j + 1];
     }
@@ -277,7 +277,7 @@ void BTree<KeyType>::_combine(BTree<KeyType>::BTNode *p, int idx) {
  */
 
 template<typename KeyType>
-void BTree<KeyType>::_adjustBTree(BTNode *p, int idx){
+void BTree<KeyType>::_adjustBTree(BTNode *p, size_t idx){
     if(idx == 0){                                        //删除的是最左边关键字
         if(p->ptr[1]->keynum > min_keynum)                   //右结点可以借
             _moveLeft(p, 1);
@@ -307,7 +307,7 @@ bool BTree<KeyType>::_btNodeDelete(BTree<KeyType>::BTNode *p, KeyType key) {
     if(p == NULL)                                     
         return false;
     else{
-        int idx;
+        size_t idx;
         bool found = _searchNode(p, key, idx);                //返回查找结果 
         if(found){                           //查找成功 
             if(p->ptr[idx] != NULL){             //删除的是非叶子结点
@@ -349,7 +349,7 @@ template<typename KeyType>
 void BTree<KeyType>::_destroyBTree(BTNode* &p){
     if(p == NULL) return;
     //递归释放B树                                   //B树不为空  
-    for(int i = 0; i <= p->keynum; ++i){                  //递归释放每一个结点 
+    for(size_t i = 0; i <= p->keynum; ++i){                  //递归释放每一个结点 
         _destroyBTree(p->ptr[i]);  
     }  
     delete p;  
@@ -379,7 +379,7 @@ void BTree<KeyType>::traverse() {
         BTNode *p = q.first;
 
         printf(" %d [", p->keynum);
-        for(int i = 1; i <= p->keynum; ++i){
+        for(size_t i = 1; i <= p->keynum; ++i){
             //TODO:这个应该加个接口
             printf(" %d ", p->key[i]);
         }
@@ -387,7 +387,7 @@ void BTree<KeyType>::traverse() {
 
 
         if(p->ptr[0] == NULL) continue;
-        for(int i = 0; i <= p->keynum; ++i){ 
+        for(size_t i = 0; i <= p->keynum; ++i){ 
             que.push({p->ptr[i], p});
         }
     }
