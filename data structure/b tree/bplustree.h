@@ -1,6 +1,8 @@
 #ifndef _BPLUS_TREE_H
 #define _BPLUS_TREE_H
 
+#include <unistd.h>
+
 /* 5 node caches are needed at least for self, left and right sibling, sibling
  * of sibling, parent and node seeking */
 #define MIN_CACHE_NUM 5
@@ -21,7 +23,8 @@
         for (pos = (head)->next, n = pos->next; pos != (head); \
                 pos = n, n = pos->next)
 
-typedef int key_t;
+typedef int bptree_key_t;
+typedef long bptree_val_t;
 
 struct list_head {
         struct list_head *prev, *next;
@@ -100,7 +103,7 @@ struct bplus_non_leaf {
         off_t next;
         int type;
         int children;
-        key_t key[BPLUS_MAX_ORDER - 1];
+        bptree_key_t key[BPLUS_MAX_ORDER - 1];
         off_t sub_ptr[BPLUS_MAX_ORDER];
 };
 struct bplus_leaf {
@@ -110,7 +113,7 @@ struct bplus_leaf {
         off_t next;
         int type;
         int entries;
-        key_t key[BPLUS_MAX_ENTRIES];
+        bptree_key_t key[BPLUS_MAX_ENTRIES];
         long data[BPLUS_MAX_ENTRIES];
 };
 */
@@ -138,9 +141,9 @@ struct bplus_tree {
 };
 
 void bplus_tree_dump(struct bplus_tree *tree);
-long bplus_tree_get(struct bplus_tree *tree, key_t key);
-int bplus_tree_put(struct bplus_tree *tree, key_t key, long data);
-long bplus_tree_get_range(struct bplus_tree *tree, key_t key1, key_t key2);
+long bplus_tree_get(struct bplus_tree *tree, bptree_key_t key);
+int bplus_tree_put(struct bplus_tree *tree, bptree_key_t key, long data);
+long bplus_tree_get_range(struct bplus_tree *tree, bptree_key_t key1, bptree_key_t key2);
 struct bplus_tree *bplus_tree_init(char *filename, int block_size);
 void bplus_tree_deinit(struct bplus_tree *tree);
 int bplus_open(char *filename);

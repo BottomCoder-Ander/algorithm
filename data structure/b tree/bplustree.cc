@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <string.h>
 #include <fcntl.h>
+
+#define _XOPEN_SOURCE 700
 #include <ctype.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -30,11 +32,11 @@ enum {
  *      for leaf node   : node info + keys + data */
 #define offset_ptr(node) ((char *) (node) + sizeof(*node))
 /* get the addr of keys in a node */
-#define key(node) ((key_t *)offset_ptr(node))
+#define key(node) ((bptree_key_t *)offset_ptr(node))
 /* get the addr of data in a leaf node */
-#define data(node) ((val_t *)(offset_ptr(node) + _max_entries * sizeof(key_t)))
+#define data(node) ((bptree_val_t *)(offset_ptr(node) + _max_entries * sizeof(bptree_key_t)))
 /* get the addr of child ptr */
-#define sub(node) ((off_t *)(offset_ptr(node) + (_max_order - 1) * sizeof(key_t)))
+#define sub(node) ((off_t *)(offset_ptr(node) + (_max_order - 1) * sizeof(bptree_key_t)))
 
 /* size for each IO op (size for each tree node) */
 static int _block_size;
@@ -51,10 +53,11 @@ static inline int is_leaf(struct bplus_node *node)
 
 /* binary search target. 
  * If target exist, return its index (non negtive) else return -lowerbound - 1(negtive) */
-static int key_binary_search(struct bplus_node *node, key_t target)
+static int key_binary_search(struct bplus_node *node, bptree_key_t target)
 {
-        key_t *arr = key(node);
-        //??????????????????????? - 1?,
+        bptree_key_t *arr = key(node);
+        /* if nonleaf : keynum = childnum - 1 
+         * else keynum = childnum */
         int len = is_leaf(node) ? node->children : node->children - 1;
         int low = -1;
         int high = len;
@@ -76,7 +79,7 @@ static int key_binary_search(struct bplus_node *node, key_t target)
 }
 
 /* return the index of last entry <= key */
-static inline int parent_key_index(struct bplus_node *parent, key_t key)
+static inline int parent_key_index(struct bplus_node *parent, bptree_key_t key)
 {
         int index = key_binary_search(parent, key);
         return index >= 0 ? index : -index - 2;
@@ -215,7 +218,7 @@ static void node_delete(struct bplus_tree *tree, struct bplus_node *node,
         }
 
         assert(node->self != INVALID_OFFSET);
-        struct free_block *block = malloc(sizeof(*block));
+        struct free_block *block = (free_block*)malloc(sizeof(*block));
         assert(block != NULL);
         /* deleted blocks can be allocated for other nodes */
         block->offset = node->self;
@@ -244,13 +247,13 @@ static inline void sub_node_flush(struct bplus_tree *tree, struct bplus_node *pa
 }
 
 /* seach the value for key in tree */
-static val_t bplus_tree_search(struct bplus_tree *tree, key_t key)
+static bptree_val_t bplus_tree_search(struct bplus_tree *tree, bptree_key_t key)
 {
-        val_t ret = -1;
+        bptree_val_t ret = -1;
         struct bplus_node *node = node_seek(tree, tree->root);
         while (node != NULL) {
                 int i = key_binary_search(node, key);
-                /* i>= 0: key in this node
+                /* i >= 0: key in this node
                  * i < 0: key not in this node, and key <= keys[-i - 1] */
                 if (is_leaf(node)) {
                         ret = i >= 0 ? data(node)[i] : -1;
@@ -302,12 +305,12 @@ static void right_node_add(struct bplus_tree *tree, struct bplus_node *node, str
         node->next = right->self;
 }
 
-static key_t non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
-                             struct bplus_node *l_ch, struct bplus_node *r_ch, key_t key);
+static bptree_key_t non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
+                             struct bplus_node *l_ch, struct bplus_node *r_ch, bptree_key_t key);
 
 /* build the parent of the l_ch and r_ch */
 static int parent_node_build(struct bplus_tree *tree, struct bplus_node *l_ch,
-                             struct bplus_node *r_ch, key_t key)
+                             struct bplus_node *r_ch, bptree_key_t key)
 {       
         /* It occur only when the parent is the tree root */
         if (l_ch->parent == INVALID_OFFSET && r_ch->parent == INVALID_OFFSET) {
@@ -336,12 +339,12 @@ static int parent_node_build(struct bplus_tree *tree, struct bplus_node *l_ch,
 
 /* split a node into two nodes. 
  * insert a key in index insert which is in the left side */
-static key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *node,
+static bptree_key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *node,
                 	         struct bplus_node *left, struct bplus_node *l_ch,
-                	         struct bplus_node *r_ch, key_t key, int insert)
+                	         struct bplus_node *r_ch, bptree_key_t key, int insert)
 {
         int i;
-        key_t split_key;
+        bptree_key_t split_key;
 
         /* split = [m/2] */
         int split = (_max_order + 1) / 2;
@@ -356,11 +359,11 @@ static key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *nod
 
         /* sum = left->children = pivot + (split - pivot - 1) + 1 */
         /* replicate from key[0] to key[insert] in original node */
-        memmove(&key(left)[0], &key(node)[0], pivot * sizeof(key_t));
+        memmove(&key(left)[0], &key(node)[0], pivot * sizeof(bptree_key_t));
         memmove(&sub(left)[0], &sub(node)[0], pivot * sizeof(off_t));
 
         /* replicate from key[insert] to key[split - 1] in original node */
-        memmove(&key(left)[pivot + 1], &key(node)[pivot], (split - pivot - 1) * sizeof(key_t));
+        memmove(&key(left)[pivot + 1], &key(node)[pivot], (split - pivot - 1) * sizeof(bptree_key_t));
         memmove(&sub(left)[pivot + 1], &sub(node)[pivot], (split - pivot - 1) * sizeof(off_t));
 
         /* flush sub-nodes of the new splitted left node */
@@ -388,7 +391,7 @@ static key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *nod
 
         /* sum = node->children = 1 + (node->children - 1) */
         /* right node left shift from key[split - 1] to key[children - 2] */
-        memmove(&key(node)[0], &key(node)[split - 1], (node->children - 1) * sizeof(key_t));
+        memmove(&key(node)[0], &key(node)[split - 1], (node->children - 1) * sizeof(bptree_key_t));
         memmove(&sub(node)[1], &sub(node)[split], (node->children - 1) * sizeof(off_t));
 
         return split_key;
@@ -396,9 +399,9 @@ static key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *nod
 
 /* Split a node into two nodes. 
  * Insert a key in index insert which is the first one in the right side */
-static key_t non_leaf_split_right1(struct bplus_tree *tree, struct bplus_node *node,
+static bptree_key_t non_leaf_split_right1(struct bplus_tree *tree, struct bplus_node *node,
                         	   struct bplus_node *right, struct bplus_node *l_ch,
-                        	   struct bplus_node *r_ch, key_t key, int insert)
+                        	   struct bplus_node *r_ch, bptree_key_t key, int insert)
 {
         int i;
 
@@ -409,7 +412,7 @@ static key_t non_leaf_split_right1(struct bplus_tree *tree, struct bplus_node *n
         right_node_add(tree, node, right);
 
         /* split key is key[split - 1] */
-        key_t split_key = key(node)[split - 1];
+        bptree_key_t split_key = key(node)[split - 1];
 
         /* calculate split nodes' children (sum as (order + 1))*/
         int pivot = 0;
@@ -423,7 +426,7 @@ static key_t non_leaf_split_right1(struct bplus_tree *tree, struct bplus_node *n
 
         /* sum = right->children = 2 + (right->children - 2) */
         /* replicate from key[split] to key[_max_order - 2] */
-        memmove(&key(right)[pivot + 1], &key(node)[split], (right->children - 2) * sizeof(key_t));
+        memmove(&key(right)[pivot + 1], &key(node)[split], (right->children - 2) * sizeof(bptree_key_t));
         memmove(&sub(right)[pivot + 2], &sub(node)[split + 1], (right->children - 2) * sizeof(off_t));
 
         /* flush sub-nodes of the new splitted right node */
@@ -437,9 +440,9 @@ static key_t non_leaf_split_right1(struct bplus_tree *tree, struct bplus_node *n
 /* Split a node into two nodes. 
  * Insert a key in index insert which is not the first one in the right side 
  * is not right ??????????????????? */
-static key_t non_leaf_split_right2(struct bplus_tree *tree, struct bplus_node *node,
+static bptree_key_t non_leaf_split_right2(struct bplus_tree *tree, struct bplus_node *node,
                         	   struct bplus_node *right, struct bplus_node *l_ch,
-                        	   struct bplus_node *r_ch, key_t key, int insert)
+                        	   struct bplus_node *r_ch, bptree_key_t key, int insert)
 {
         int i;
 
@@ -450,7 +453,7 @@ static key_t non_leaf_split_right2(struct bplus_tree *tree, struct bplus_node *n
         right_node_add(tree, node, right);
 
         /* split key is key[split] */
-        key_t split_key = key(node)[split];
+        bptree_key_t split_key = key(node)[split];
 
         /* calculate split nodes' children (sum as (order + 1))*/
         int pivot = insert - split - 1;
@@ -459,7 +462,7 @@ static key_t non_leaf_split_right2(struct bplus_tree *tree, struct bplus_node *n
 
         /* sum = right->children = pivot + 2 + (_max_order - insert - 1) */
         /* replicate from key[split + 1] to key[insert] */
-        memmove(&key(right)[0], &key(node)[split + 1], pivot * sizeof(key_t));
+        memmove(&key(right)[0], &key(node)[split + 1], pivot * sizeof(bptree_key_t));
         memmove(&sub(right)[0], &sub(node)[split + 1], pivot * sizeof(off_t));
 
         /* insert new key and sub-node */
@@ -468,7 +471,7 @@ static key_t non_leaf_split_right2(struct bplus_tree *tree, struct bplus_node *n
         sub_node_update(tree, right, pivot + 1, r_ch);
 
         /* replicate from key[insert] to key[order - 1] */
-        memmove(&key(right)[pivot + 1], &key(node)[insert], (_max_order - insert - 1) * sizeof(key_t));
+        memmove(&key(right)[pivot + 1], &key(node)[insert], (_max_order - insert - 1) * sizeof(bptree_key_t));
         memmove(&sub(right)[pivot + 2], &sub(node)[insert + 1], (_max_order - insert - 1) * sizeof(off_t));
 
         /* flush sub-nodes of the new splitted right node */
@@ -484,9 +487,9 @@ static key_t non_leaf_split_right2(struct bplus_tree *tree, struct bplus_node *n
 /* insert a key in index insert to a nonleaf node and no split occur */
 static void non_leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *node,
                         	   struct bplus_node *l_ch, struct bplus_node *r_ch,
-                        	   key_t key, int insert)
+                        	   bptree_key_t key, int insert)
 {
-        memmove(&key(node)[insert + 1], &key(node)[insert], (node->children - 1 - insert) * sizeof(key_t));
+        memmove(&key(node)[insert + 1], &key(node)[insert], (node->children - 1 - insert) * sizeof(bptree_key_t));
         memmove(&sub(node)[insert + 2], &sub(node)[insert + 1], (node->children - 1 - insert) * sizeof(off_t));
         /* insert new key and sub-nodes */
         key(node)[insert] = key;
@@ -497,7 +500,7 @@ static void non_leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *n
 
 /* insert a key to a nonleaf node */
 static int non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
-                	   struct bplus_node *l_ch, struct bplus_node *r_ch, key_t key)
+                	   struct bplus_node *l_ch, struct bplus_node *r_ch, bptree_key_t key)
 {
         /* Search key location */
         int insert = key_binary_search(node, key);
@@ -506,7 +509,7 @@ static int non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
 
         /* node is full, split occur */
         if (node->children == _max_order) {
-                key_t split_key;
+                bptree_key_t split_key;
                 /* split = [m/2] */
                 int split = (node->children + 1) / 2;
                 struct bplus_node *sibling = non_leaf_new(tree);
@@ -532,8 +535,8 @@ static int non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
 }
 
 /* split a leaf into two leaf and insert (key,data) to the left  */
-static key_t leaf_split_left(struct bplus_tree *tree, struct bplus_node *leaf,
-                	     struct bplus_node *left, key_t key, val_t data, int insert)
+static bptree_key_t leaf_split_left(struct bplus_tree *tree, struct bplus_node *leaf,
+                	     struct bplus_node *left, bptree_key_t key, bptree_val_t data, int insert)
 {
         /* split = [m/2] */
         int split = (leaf->children + 1) / 2;
@@ -548,27 +551,27 @@ static key_t leaf_split_left(struct bplus_tree *tree, struct bplus_node *leaf,
 
         /* sum = left->children = pivot + 1 + (split - pivot - 1) */
         /* replicate from key[0] to key[insert] */
-        memmove(&key(left)[0], &key(leaf)[0], pivot * sizeof(key_t));
-        memmove(&data(left)[0], &data(leaf)[0], pivot * sizeof(val_t));
+        memmove(&key(left)[0], &key(leaf)[0], pivot * sizeof(bptree_key_t));
+        memmove(&data(left)[0], &data(leaf)[0], pivot * sizeof(bptree_val_t));
 
         /* insert new key and data */
         key(left)[pivot] = key;
         data(left)[pivot] = data;
 
         /* replicate from key[insert] to key[split - 1] */
-        memmove(&key(left)[pivot + 1], &key(leaf)[pivot], (split - pivot - 1) * sizeof(key_t));
-        memmove(&data(left)[pivot + 1], &data(leaf)[pivot], (split - pivot - 1) * sizeof(val_t));
+        memmove(&key(left)[pivot + 1], &key(leaf)[pivot], (split - pivot - 1) * sizeof(bptree_key_t));
+        memmove(&data(left)[pivot + 1], &data(leaf)[pivot], (split - pivot - 1) * sizeof(bptree_val_t));
 
         /* original leaf left shift */
-        memmove(&key(leaf)[0], &key(leaf)[split - 1], leaf->children * sizeof(key_t));
-        memmove(&data(leaf)[0], &data(leaf)[split - 1], leaf->children * sizeof(val_t));
+        memmove(&key(leaf)[0], &key(leaf)[split - 1], leaf->children * sizeof(bptree_key_t));
+        memmove(&data(leaf)[0], &data(leaf)[split - 1], leaf->children * sizeof(bptree_val_t));
 
         return key(leaf)[0];
 }
 
 /* split a leaf into two leaf and insert (key,data) to the right  */
-static key_t leaf_split_right(struct bplus_tree *tree, struct bplus_node *leaf,
-                	      struct bplus_node *right, key_t key, val_t data, int insert)
+static bptree_key_t leaf_split_right(struct bplus_tree *tree, struct bplus_node *leaf,
+                	      struct bplus_node *right, bptree_key_t key, bptree_val_t data, int insert)
 {
         /* split = [m/2] */
         int split = (leaf->children + 1) / 2;
@@ -583,33 +586,33 @@ static key_t leaf_split_right(struct bplus_tree *tree, struct bplus_node *leaf,
 
         /* sum = right->children = pivot + 1 + (_max_entries - pivot - split) */
         /* replicate from key[split] to key[children - 1] in original leaf */
-        memmove(&key(right)[0], &key(leaf)[split], pivot * sizeof(key_t));
-        memmove(&data(right)[0], &data(leaf)[split], pivot * sizeof(val_t));
+        memmove(&key(right)[0], &key(leaf)[split], pivot * sizeof(bptree_key_t));
+        memmove(&data(right)[0], &data(leaf)[split], pivot * sizeof(bptree_val_t));
 
         /* insert new key and data */
         key(right)[pivot] = key;
         data(right)[pivot] = data;
 
         /* replicate from key[insert] to key[children - 1] in original leaf */
-        memmove(&key(right)[pivot + 1], &key(leaf)[insert], (_max_entries - insert) * sizeof(key_t));
-        memmove(&data(right)[pivot + 1], &data(leaf)[insert], (_max_entries - insert) * sizeof(val_t));
+        memmove(&key(right)[pivot + 1], &key(leaf)[insert], (_max_entries - insert) * sizeof(bptree_key_t));
+        memmove(&data(right)[pivot + 1], &data(leaf)[insert], (_max_entries - insert) * sizeof(bptree_val_t));
 
         return key(right)[0];
 }
 
 /* simple insertion of a leaf without split */
 static void leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *leaf,
-                	       key_t key, val_t data, int insert)
+                	       bptree_key_t key, bptree_val_t data, int insert)
 {
-        memmove(&key(leaf)[insert + 1], &key(leaf)[insert], (leaf->children - insert) * sizeof(key_t));
-        memmove(&data(leaf)[insert + 1], &data(leaf)[insert], (leaf->children - insert) * sizeof(val_t));
+        memmove(&key(leaf)[insert + 1], &key(leaf)[insert], (leaf->children - insert) * sizeof(bptree_key_t));
+        memmove(&data(leaf)[insert + 1], &data(leaf)[insert], (leaf->children - insert) * sizeof(bptree_val_t));
         key(leaf)[insert] = key;
         data(leaf)[insert] = data;
         leaf->children++;
 }
 
 /* insert a key in a leaf */
-static int leaf_insert(struct bplus_tree *tree, struct bplus_node *leaf, key_t key, val_t data)
+static int leaf_insert(struct bplus_tree *tree, struct bplus_node *leaf, bptree_key_t key, bptree_val_t data)
 {
         /* Search key location */
         int insert = key_binary_search(leaf, key);
@@ -625,7 +628,7 @@ static int leaf_insert(struct bplus_tree *tree, struct bplus_node *leaf, key_t k
 
         /* leaf is full, split occur */
         if (leaf->children == _max_entries) {
-                key_t split_key;
+                bptree_key_t split_key;
                 /* split = [m/2] */
                 int split = (_max_entries + 1) / 2;
                 struct bplus_node *sibling = leaf_new(tree);
@@ -652,7 +655,7 @@ static int leaf_insert(struct bplus_tree *tree, struct bplus_node *leaf, key_t k
 }
 
 /* insert a key/data pair */
-static int bplus_tree_insert(struct bplus_tree *tree, key_t key, val_t data)
+static int bplus_tree_insert(struct bplus_tree *tree, bptree_key_t key, bptree_val_t data)
 {
         struct bplus_node *node = node_seek(tree, tree->root);
         /* search which leaf to insert. */
@@ -684,6 +687,7 @@ static int bplus_tree_insert(struct bplus_tree *tree, key_t key, val_t data)
 static inline int sibling_select(struct bplus_node *l_sib, struct bplus_node *r_sib,
                                  struct bplus_node *parent, int i)
 {
+        /* i is the key index, sub-node index is i + 1 */
         if (i == -1) {
                 /* the frist sub-node, no left sibling, choose the right one */
                 return RIGHT_SIBLING;
@@ -696,12 +700,13 @@ static inline int sibling_select(struct bplus_node *l_sib, struct bplus_node *r_
         }
 }
 
+/* move one ele from left sibling to current node */
 static void non_leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node *node,
                         	     struct bplus_node *left, struct bplus_node *parent,
                         	     int parent_key_index, int remove)
 {
         /* node's elements right shift */
-        memmove(&key(node)[1], &key(node)[0], remove * sizeof(key_t));
+        memmove(&key(node)[1], &key(node)[0], remove * sizeof(bptree_key_t));
         memmove(&sub(node)[1], &sub(node)[0], (remove + 1) * sizeof(off_t));
 
         /* parent key right rotation */
@@ -715,6 +720,7 @@ static void non_leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node 
         left->children--;
 }
 
+/* merge two nonleaf node to the left one */
 static void non_leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node *node,
                         	     struct bplus_node *left, struct bplus_node *parent,
                         	     int parent_key_index, int remove)
@@ -724,11 +730,11 @@ static void non_leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node 
 
         /* merge into left sibling */
         /* key sum = node->children - 2 */
-        memmove(&key(left)[left->children], &key(node)[0], remove * sizeof(key_t));
+        memmove(&key(left)[left->children], &key(node)[0], remove * sizeof(bptree_key_t));
         memmove(&sub(left)[left->children], &sub(node)[0], (remove + 1) * sizeof(off_t));
 
         /* sub-node sum = node->children - 1 */
-        memmove(&key(left)[left->children + remove], &key(node)[remove + 1], (node->children - remove - 2) * sizeof(key_t));
+        memmove(&key(left)[left->children + remove], &key(node)[remove + 1], (node->children - remove - 2) * sizeof(bptree_key_t));
         memmove(&sub(left)[left->children + remove + 1], &sub(node)[remove + 2], (node->children - remove - 2) * sizeof(off_t));
 
         /* flush sub-nodes of the new merged left node */
@@ -740,6 +746,7 @@ static void non_leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node 
         left->children += node->children - 1;
 }
 
+/* move one ele from right sibling to current node */
 static void non_leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *node,
                         	      struct bplus_node *right, struct bplus_node *parent,
                         	      int parent_key_index)
@@ -754,12 +761,13 @@ static void non_leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node
         node->children++;
 
         /* right sibling left shift*/
-        memmove(&key(right)[0], &key(right)[1], (right->children - 2) * sizeof(key_t));
+        memmove(&key(right)[0], &key(right)[1], (right->children - 2) * sizeof(bptree_key_t));
         memmove(&sub(right)[0], &sub(right)[1], (right->children - 1) * sizeof(off_t));
 
         right->children--;
 }
 
+/* merge two nonleaf node to the right one */
 static void non_leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node *node,
                         	      struct bplus_node *right, struct bplus_node *parent,
                         	      int parent_key_index)
@@ -769,7 +777,7 @@ static void non_leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node
         node->children++;
 
         /* merge from right sibling */
-        memmove(&key(node)[node->children - 1], &key(right)[0], (right->children - 1) * sizeof(key_t));
+        memmove(&key(node)[node->children - 1], &key(right)[0], (right->children - 1) * sizeof(bptree_key_t));
         memmove(&sub(node)[node->children - 1], &sub(right)[0], right->children * sizeof(off_t));
 
         /* flush sub-nodes of the new merged node */
@@ -781,20 +789,22 @@ static void non_leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node
         node->children += right->children - 1;
 }
 
+/* simple remove, no merge or shift occur */
 static inline void non_leaf_simple_remove(struct bplus_tree *tree, struct bplus_node *node, int remove)
 {
         assert(node->children >= 2);
-        memmove(&key(node)[remove], &key(node)[remove + 1], (node->children - remove - 2) * sizeof(key_t));
+        memmove(&key(node)[remove], &key(node)[remove + 1], (node->children - remove - 2) * sizeof(bptree_key_t));
         memmove(&sub(node)[remove + 1], &sub(node)[remove + 2], (node->children - remove - 2) * sizeof(off_t));
         node->children--;
 }
 
+/* remove key(node)[remove] and sub(node)[remove + 1] from node */
 static void non_leaf_remove(struct bplus_tree *tree, struct bplus_node *node, int remove)
 {
         if (node->parent == INVALID_OFFSET) {
-                /* node is the root */
+                /* node == root */
                 if (node->children == 2) {
-                        /* replace old root with the first sub-node */
+                        /* just one key remain, replace old root with the first sub-node */
                         struct bplus_node *root = node_fetch(tree, sub(node)[0]);
                         root->parent = INVALID_OFFSET;
                         tree->root = root->self;
@@ -855,12 +865,13 @@ static void non_leaf_remove(struct bplus_tree *tree, struct bplus_node *node, in
         }
 }
 
+/* move one ele from left sibling to current leaf  */
 static void leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node *leaf,
                 		 struct bplus_node *left, struct bplus_node *parent,
                 		 int parent_key_index, int remove)
 {
         /* right shift in leaf node */
-        memmove(&key(leaf)[1], &key(leaf)[0], remove * sizeof(key_t));
+        memmove(&key(leaf)[1], &key(leaf)[0], remove * sizeof(bptree_key_t));
         memmove(&data(leaf)[1], &data(leaf)[0], remove * sizeof(off_t));
 
         /* borrow the last element from left sibling */
@@ -872,17 +883,19 @@ static void leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node *lea
         key(parent)[parent_key_index] = key(leaf)[0];
 }
 
+/* merge two leaf to the left */
 static void leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node *leaf,
                 		 struct bplus_node *left, int parent_key_index, int remove)
 {
         /* merge into left sibling, sum = leaf->children - 1*/
-        memmove(&key(left)[left->children], &key(leaf)[0], remove * sizeof(key_t));
+        memmove(&key(left)[left->children], &key(leaf)[0], remove * sizeof(bptree_key_t));
         memmove(&data(left)[left->children], &data(leaf)[0], remove * sizeof(off_t));
-        memmove(&key(left)[left->children + remove], &key(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(key_t));
+        memmove(&key(left)[left->children + remove], &key(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(bptree_key_t));
         memmove(&data(left)[left->children + remove], &data(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(off_t));
         left->children += leaf->children - 1;
 }
 
+/* move one ele from right sibling to current leaf */
 static void leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *leaf,
                                   struct bplus_node *right, struct bplus_node *parent,
                                   int parent_key_index)
@@ -893,7 +906,7 @@ static void leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *le
         leaf->children++;
 
         /* left shift in right sibling */
-        memmove(&key(right)[0], &key(right)[1], (right->children - 1) * sizeof(key_t));
+        memmove(&key(right)[0], &key(right)[1], (right->children - 1) * sizeof(bptree_key_t));
         memmove(&data(right)[0], &data(right)[1], (right->children - 1) * sizeof(off_t));
         right->children--;
 
@@ -901,22 +914,28 @@ static void leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *le
         key(parent)[parent_key_index] = key(right)[0];
 }
 
+/* merge two leaf to the right */
 static inline void leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node *leaf,
                                          struct bplus_node *right)
 {
-        memmove(&key(leaf)[leaf->children], &key(right)[0], right->children * sizeof(key_t));
+        memmove(&key(leaf)[leaf->children], &key(right)[0], right->children * sizeof(bptree_key_t));
         memmove(&data(leaf)[leaf->children], &data(right)[0], right->children * sizeof(off_t));
         leaf->children += right->children;
 }
 
+/* simple remove leaf without shift or merge */
 static inline void leaf_simple_remove(struct bplus_tree *tree, struct bplus_node *leaf, int remove)
 {
-        memmove(&key(leaf)[remove], &key(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(key_t));
+        memmove(&key(leaf)[remove], &key(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(bptree_key_t));
         memmove(&data(leaf)[remove], &data(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(off_t));
         leaf->children--;
 }
 
-static int leaf_remove(struct bplus_tree *tree, struct bplus_node *leaf, key_t key)
+/* remove a leaf node with key
+ *  two difference between non_leaf_remove:
+ *    1.the parameter, key vs index
+ *    2.removed data, data vs sub-node ptr         */
+static int leaf_remove(struct bplus_tree *tree, struct bplus_node *leaf, bptree_key_t key)
 {
         int remove = key_binary_search(leaf, key);
         if (remove < 0) {
@@ -927,7 +946,7 @@ static int leaf_remove(struct bplus_tree *tree, struct bplus_node *leaf, key_t k
         /* fetch from free node caches */
         int i = ((char *) leaf - tree->caches) / _block_size;
         tree->used[i] = 1;
-
+        
         if (leaf->parent == INVALID_OFFSET) {
                 /* leaf as the root */
                 if (leaf->children == 1) {
@@ -992,7 +1011,7 @@ static int leaf_remove(struct bplus_tree *tree, struct bplus_node *leaf, key_t k
         return 0;
 }
 
-static int bplus_tree_delete(struct bplus_tree *tree, key_t key)
+static int bplus_tree_delete(struct bplus_tree *tree, bptree_key_t key)
 {
         struct bplus_node *node = node_seek(tree, tree->root);
         while (node != NULL) {
@@ -1011,12 +1030,12 @@ static int bplus_tree_delete(struct bplus_tree *tree, key_t key)
         return -1;
 }
 
-val_t bplus_tree_get(struct bplus_tree *tree, key_t key)
+bptree_val_t bplus_tree_get(struct bplus_tree *tree, bptree_key_t key)
 {
         return bplus_tree_search(tree, key);
 }
 
-int bplus_tree_put(struct bplus_tree *tree, key_t key, val_t data)
+int bplus_tree_put(struct bplus_tree *tree, bptree_key_t key, bptree_val_t data)
 {
         if (data) {
                 return bplus_tree_insert(tree, key, data);
@@ -1025,11 +1044,11 @@ int bplus_tree_put(struct bplus_tree *tree, key_t key, val_t data)
         }
 }
 
-val_t bplus_tree_get_range(struct bplus_tree *tree, key_t key1, key_t key2)
+bptree_val_t bplus_tree_get_range(struct bplus_tree *tree, bptree_key_t key1, bptree_key_t key2)
 {
-        val_t start = -1;
-        key_t min = key1 <= key2 ? key1 : key2;
-        key_t max = min == key1 ? key2 : key1;
+        bptree_val_t start = -1;
+        bptree_key_t min = key1 <= key2 ? key1 : key2;
+        bptree_key_t max = min == key1 ? key2 : key1;
 
         struct bplus_node *node = node_seek(tree, tree->root);
         while (node != NULL) {
@@ -1072,6 +1091,7 @@ void bplus_close(int fd)
         close(fd);
 }
 
+/* convert a hex repr str to integer */
 static off_t str_to_hex(char *c, int len)
 {
         off_t offset = 0;
@@ -1137,14 +1157,14 @@ struct bplus_tree *bplus_tree_init(char *filename, int block_size)
         }
 
         _block_size = block_size;
-        _max_order = (block_size - sizeof(node)) / (sizeof(key_t) + sizeof(off_t));
-        _max_entries = (block_size - sizeof(node)) / (sizeof(key_t) + sizeof(val_t));
+        _max_order = (block_size - sizeof(node)) / (sizeof(bptree_key_t) + sizeof(off_t));
+        _max_entries = (block_size - sizeof(node)) / (sizeof(bptree_key_t) + sizeof(bptree_val_t));
         if (_max_order <= 2) {
                 fprintf(stderr, "block size is too small for one node!\n");
                 return NULL;
         }
 
-        struct bplus_tree *tree = calloc(1, sizeof(*tree));
+        struct bplus_tree *tree = (bplus_tree*)calloc(1, sizeof(*tree));
         assert(tree != NULL);
         list_init(&tree->free_blocks);
         strcpy(tree->filename, filename);
@@ -1157,7 +1177,7 @@ struct bplus_tree *bplus_tree_init(char *filename, int block_size)
                 tree->file_size = offset_load(fd);
                 /* load free blocks */
                 while ((i = offset_load(fd)) != INVALID_OFFSET) {
-                        struct free_block *block = malloc(sizeof(*block));
+                        struct free_block *block = (free_block*)malloc(sizeof(*block));
                         assert(block != NULL);
                         block->offset = i;
                         list_add(&block->link, &tree->free_blocks);
@@ -1170,12 +1190,12 @@ struct bplus_tree *bplus_tree_init(char *filename, int block_size)
         }
 
         /* set order and entries */
-        _max_order = (_block_size - sizeof(node)) / (sizeof(key_t) + sizeof(off_t));
-        _max_entries = (_block_size - sizeof(node)) / (sizeof(key_t) + sizeof(val_t));
+        _max_order = (_block_size - sizeof(node)) / (sizeof(bptree_key_t) + sizeof(off_t));
+        _max_entries = (_block_size - sizeof(node)) / (sizeof(bptree_key_t) + sizeof(bptree_val_t));
         printf("config node order:%d and leaf entries:%d\n", _max_order, _max_entries);
 
         /* init free node caches */
-        tree->caches = malloc(_block_size * MIN_CACHE_NUM);
+        tree->caches = (char*)malloc(_block_size * MIN_CACHE_NUM);
 
         /* open data file */
         tree->fd = bplus_open(filename);
@@ -1183,6 +1203,7 @@ struct bplus_tree *bplus_tree_init(char *filename, int block_size)
         return tree;
 }
 
+/* store root offset, filesize, blocksize and freeblock offsets */
 void bplus_tree_deinit(struct bplus_tree *tree)
 {
         int fd = open(tree->filename, O_CREAT | O_RDWR, 0644);
@@ -1256,6 +1277,7 @@ static void draw(struct bplus_tree *tree, struct bplus_node *node, struct node_b
         node_key_dump(node);
 }
 
+/* traverse the tree by dfs */
 void bplus_tree_dump(struct bplus_tree *tree)
 {
         int level = 0;
@@ -1274,7 +1296,7 @@ void bplus_tree_dump(struct bplus_tree *tree)
                         /* Backlog the node */
                         if (is_leaf(node) || sub_idx + 1 >= children(node)) {
                                 top->offset = INVALID_OFFSET;
-                                top->next_sub_idx = 0;
+                                top->next_sub_idx = 0;                                                         
                         } else {
                                 top->offset = node->self;
                                 top->next_sub_idx = sub_idx + 1;
@@ -1290,6 +1312,7 @@ void bplus_tree_dump(struct bplus_tree *tree)
                         /* Move deep down */
                         node = is_leaf(node) ? NULL : node_seek(tree, sub(node)[sub_idx]);
                 } else {
+                        /* traceback */
                         p_nbl = top == nbl_stack ? NULL : --top;
                         if (p_nbl == NULL) {
                                 /* End of traversal */
@@ -1299,6 +1322,20 @@ void bplus_tree_dump(struct bplus_tree *tree)
                         level--;
                 }
         }
+}
+
+int main(){
+
+    bplus_tree *tree;
+    tree = bplus_tree_init("bplustreefile.txt", 128);
+
+    int i = 1;
+    for(; i < 1000; ++i){
+        bplus_tree_put(tree, i, i);
+    }
+
+    bplus_tree_dump(tree);
+    return 0;
 }
 
 #endif
