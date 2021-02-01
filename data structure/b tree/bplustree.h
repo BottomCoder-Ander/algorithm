@@ -84,9 +84,9 @@ typedef struct bplus_node {
         off_t self;
         /* parent offset */
         off_t parent;
-        /* prev node offset */
+        /* prev node (left sibling) offset */
         off_t prev;
-        /* next node offset */
+        /* next node (right sibling) offset */
         off_t next;
         /* If it's a leaf, type = 0, otherwise type = 1 */
         int type;
